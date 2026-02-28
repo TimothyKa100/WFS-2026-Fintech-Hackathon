@@ -158,19 +158,14 @@ export default function NetworkGraph({
               const r = 6;
 
               const group = node.group || "default";
-              const fill =
-                group === "majors"
-                  ? "rgba(34,197,94,0.95)"
-                  : group === "alts"
-                  ? "rgba(59,130,246,0.95)"
-                  : "rgba(148,163,184,0.95)";
+              const fill = "rgba(59,130,246,0.95)"; // all blue
 
               // anomaly halo
               // anomaly indicator (subtle glow + thin ring)
-            // much smaller anomaly ring
-            const anomaly = clamp01(Number(node.anomaly ?? 0));
+              // much smaller anomaly ring
+              const anomaly = clamp01(Number(node.anomaly ?? 0));
 
-            if (anomaly > 0.02) {
+              if (anomaly > 0.02) {
                 const ringR = r + 2 + 3 * anomaly; // WAS big, now tiny
 
                 ctx.beginPath();
@@ -178,7 +173,7 @@ export default function NetworkGraph({
                 ctx.strokeStyle = `rgba(250, 204, 21, ${0.2 + 0.4 * anomaly})`;
                 ctx.lineWidth = (1 + 1 * anomaly) / globalScale; // thinner
                 ctx.stroke();
-            }
+              }
 
               // main node
               ctx.beginPath();
@@ -262,103 +257,228 @@ export default function NetworkGraph({
           />
         </div>
 
-        {/* CONTROLS: now BELOW the graph, outside overflow-hidden so they don't vanish */}
-        <div className="flex flex-wrap items-center justify-between gap-3 p-3 border-t border-border bg-panel2">
-          <div className="flex items-center gap-2">
-            <div className="text-xs text-muted">Search</div>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="BTC / ETH / SOL…"
-              className="w-48 bg-bg border border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-muted/60"
-            />
-            <button
-              className="text-xs px-3 py-2 rounded-xl border border-border bg-bg hover:border-muted/40 transition"
-              onClick={() => {
-                if (highlightedId) focusNodeById(highlightedId);
-              }}
-              disabled={!highlightedId}
-            >
-              Focus
-            </button>
-          </div>
+        {/* CONTROLS: revamped visual (same handlers/state, just styling/layout) */}
+        <div className="p-3 border-t border-border">
+          <div className="rounded-2xl border border-border bg-panel2/70 backdrop-blur-sm shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3">
+              {/* Left: Search + Focus */}
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-border bg-bg/50 text-[11px] text-muted">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-300" />
+                    Search & Focus
+                  </span>
+                </div>
 
-          <button
-            className="text-xs px-3 py-2 rounded-xl border border-border bg-bg hover:border-muted/40 transition"
-            onClick={() => {
-              setSelected(null);
-              fgRef.current?.zoomToFit?.(350, 60);
-            }}
-          >
-            Reset view
-          </button>
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <input
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="BTC / ETH / SOL…"
+                      className={[
+                        "w-64 bg-bg border border-border rounded-2xl pl-4 pr-24 py-2.5 text-sm outline-none",
+                        "focus:border-muted/60 focus:ring-2 focus:ring-amber-300/10",
+                        "placeholder:text-muted/60",
+                      ].join(" ")}
+                    />
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                      <span className="hidden sm:inline text-[10px] px-2 py-1 rounded-full border border-border bg-bg/60 text-muted">
+                        {highlightedId ? "match" : "no match"}
+                      </span>
+                      <button
+                        className={[
+                          "text-xs px-3 py-2 rounded-xl border border-border bg-bg",
+                          "hover:border-muted/40 transition",
+                          "disabled:opacity-50 disabled:cursor-not-allowed",
+                        ].join(" ")}
+                        onClick={() => {
+                          if (highlightedId) focusNodeById(highlightedId);
+                        }}
+                        disabled={!highlightedId}
+                      >
+                        Focus
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right: Reset */}
+              <div className="flex items-center gap-2">
+                <span className="hidden sm:inline text-[11px] text-muted">
+                  Tip: click a node to inspect
+                </span>
+                <button
+                  className={[
+                    "text-xs px-3 py-2 rounded-xl border border-border bg-bg",
+                    "hover:border-muted/40 transition",
+                  ].join(" ")}
+                  onClick={() => {
+                    setSelected(null);
+                    fgRef.current?.zoomToFit?.(350, 60);
+                  }}
+                >
+                  Reset view
+                </button>
+              </div>
+            </div>
+
+            {/* Subtle divider + status strip */}
+            <div className="border-t border-border/80 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[11px] text-muted flex items-center gap-2">
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-1.5 w-1.5 rounded-full bg-slate-300/80" />
+                  Rendering edges: top {topK} per asset
+                </span>
+                {minAbsCorr > 0 ? (
+                  <span className="px-2 py-0.5 rounded-full border border-border bg-bg/50">
+                    |corr| ≥ {minAbsCorr}
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full border border-border bg-bg/50">
+                    no minimum filter
+                  </span>
+                )}
+              </div>
+
+              <div className="text-[11px] text-muted flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-full border border-border bg-bg/50">
+                  Nodes: {(nodes || []).length}
+                </span>
+                <span className="px-2 py-0.5 rounded-full border border-border bg-bg/50">
+                  Links: {(graphData?.links || []).length}
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-border bg-panel2 p-3 text-sm">
+      {/* Selected node panel (revamped visual only) */}
+      <div className="rounded-2xl border border-border bg-panel2 p-3">
         {selected ? (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="font-semibold text-text">
-              Focus: {selected.label || selected.id}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-2xl border border-border bg-bg/60 flex items-center justify-center shadow-sm">
+                <div className="h-3 w-3 rounded-full bg-green-400/80" />
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-muted">
+                  Selected asset
+                </div>
+                <div className="font-semibold text-text text-base leading-tight">
+                  {selected.label || selected.id}
+                </div>
+              </div>
             </div>
-            <div className="text-xs text-muted">
-              price{" "}
-              <span className="text-text font-semibold">
-                {selected.price != null ? Number(selected.price).toFixed(2) : "—"}
-              </span>{" "}
-              • ret{" "}
-              <span className="text-text font-semibold">
-                {selected.ret != null
-                  ? `${(Number(selected.ret) * 100).toFixed(2)}%`
-                  : "—"}
-              </span>{" "}
-              • vol{" "}
-              <span className="text-text font-semibold">
-                {selected.vol != null
-                  ? `${(Number(selected.vol) * 100).toFixed(1)}%`
-                  : "—"}
-              </span>{" "}
-              • anomaly{" "}
-              <span className="text-text font-semibold">
-                {selected.anomaly != null
-                  ? `${(Number(selected.anomaly) * 100).toFixed(0)}%`
-                  : "—"}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="px-2.5 py-1 rounded-full border border-border bg-bg/50 text-xs text-muted">
+                price{" "}
+                <span className="text-text font-semibold">
+                  {selected.price != null ? Number(selected.price).toFixed(2) : "—"}
+                </span>
+              </span>
+
+              <span className="px-2.5 py-1 rounded-full border border-border bg-bg/50 text-xs text-muted">
+                ret{" "}
+                <span className="text-text font-semibold">
+                  {selected.ret != null
+                    ? `${(Number(selected.ret) * 100).toFixed(2)}%`
+                    : "—"}
+                </span>
+              </span>
+
+              <span className="px-2.5 py-1 rounded-full border border-border bg-bg/50 text-xs text-muted">
+                vol{" "}
+                <span className="text-text font-semibold">
+                  {selected.vol != null
+                    ? `${(Number(selected.vol) * 100).toFixed(1)}%`
+                    : "—"}
+                </span>
+              </span>
+
+              <span className="px-2.5 py-1 rounded-full border border-border bg-bg/50 text-xs text-muted">
+                anomaly{" "}
+                <span className="text-text font-semibold">
+                  {selected.anomaly != null
+                    ? `${(Number(selected.anomaly) * 100).toFixed(0)}%`
+                    : "—"}
+                </span>
               </span>
             </div>
           </div>
         ) : (
-          <div className="text-muted text-xs">
-            No node selected. Click an asset to inspect.
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-2xl border border-border bg-bg/60 flex items-center justify-center">
+                <div className="h-2.5 w-2.5 rounded-full bg-slate-300/70" />
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-muted">
+                  Inspector
+                </div>
+                <div className="text-muted text-sm">
+                  No node selected. Click an asset to inspect.
+                </div>
+              </div>
+            </div>
+            <div className="hidden sm:flex text-[11px] text-muted items-center gap-2">
+              <span className="px-2 py-1 rounded-full border border-border bg-bg/50">
+                drag to pan
+              </span>
+              <span className="px-2 py-1 rounded-full border border-border bg-bg/50">
+                scroll to zoom
+              </span>
+            </div>
           </div>
         )}
       </div>
 
-      <div className="flex flex-wrap gap-3 text-xs text-muted">
-        <span className="inline-flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-green-400" />
-          Positive corr
-        </span>
-        <span className="inline-flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-red-400" />
-          Negative corr (dashed)
-        </span>
-        <span className="inline-flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-amber-300" />
-          Anomaly halo
-        </span>
-        <span className="inline-flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-amber-200" />
-          Correlation spike (pulse)
-        </span>
-        <span className="inline-flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-amber-300" />
-          Search highlight
-        </span>
-        <span className="inline-flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-slate-300" />
-          Edges: top {topK} per asset
-          {minAbsCorr > 0 ? ` (|corr| ≥ ${minAbsCorr})` : ""}
-        </span>
+      {/* Legend (revamped visual only) */}
+      <div className="rounded-2xl border border-border bg-panel2/60 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <div className="text-[11px] uppercase tracking-wider text-muted">
+            Legend
+          </div>
+          <div className="text-[11px] text-muted">
+            Visual encoding of correlations + signals
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-border bg-bg/50 text-muted">
+            <span className="h-2 w-2 rounded-full bg-green-400" />
+            Positive corr
+          </span>
+
+          <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-border bg-bg/50 text-muted">
+            <span className="h-2 w-2 rounded-full bg-red-400" />
+            Negative corr (dashed)
+          </span>
+
+          <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-border bg-bg/50 text-muted">
+            <span className="h-2 w-2 rounded-full bg-amber-300" />
+            Anomaly halo
+          </span>
+
+          <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-border bg-bg/50 text-muted">
+            <span className="h-2 w-2 rounded-full bg-amber-200" />
+            Correlation spike (pulse)
+          </span>
+
+          <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-border bg-bg/50 text-muted">
+            <span className="h-2 w-2 rounded-full bg-amber-300" />
+            Search highlight
+          </span>
+
+          <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-border bg-bg/50 text-muted">
+            <span className="h-2 w-2 rounded-full bg-slate-300" />
+            Edges: top {topK} per asset
+            {minAbsCorr > 0 ? ` (|corr| ≥ ${minAbsCorr})` : ""}
+          </span>
+        </div>
       </div>
     </div>
   );
