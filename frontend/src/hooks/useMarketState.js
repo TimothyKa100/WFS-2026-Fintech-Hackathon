@@ -1,6 +1,6 @@
 // src/hooks/useMarketState.js
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchState } from "../api/client";
+import { fetchState, fetchCorrelation } from "../api/client";
 
 /* -------------------- Helpers -------------------- */
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
@@ -278,7 +278,7 @@ const DEFAULT_UNIVERSE_25 = [
 function makeMockState(now = Date.now(), universe = DEFAULT_UNIVERSE_25) {
   const assets = universe.slice(0, 25);
 
-  const t = (now / 1000);
+  const t = now / 1000;
   const nodes = assets.map((a, i) => {
     const vol = 0.18 + 0.18 * Math.abs(Math.sin(t / 23 + i * 0.23));
     const ret = 0.012 * Math.sin(t / 9 + i * 0.31);
@@ -338,9 +338,7 @@ export default function useMarketState({
   universe = DEFAULT_UNIVERSE_25, // allow override
   maxAssets = 25, // cap API nodes for your "25 assets" requirement
 } = {}) {
-  const [state, setState] = useState(() =>
-    makeMockState(Date.now(), universe)
-  );
+  const [state, setState] = useState(() => makeMockState(Date.now(), universe));
   const [status, setStatus] = useState({
     ok: true,
     source: "mock", // "api" | "mock"
@@ -354,8 +352,23 @@ export default function useMarketState({
   // keep last edge weights so we can detect "spikes" for glow pulses
   const prevEdgesMapRef = useRef(new Map());
 
+  // cache correlation so we don't hammer /correlation every tick
+  const corrCacheRef = useRef({ ts: 0, data: null });
+  const CORR_CACHE_MS = 10_000;
+
   useEffect(() => {
     let cancelled = false;
+
+    async function getCorrCached() {
+      const now = Date.now();
+      const cached = corrCacheRef.current;
+      if (cached.data && now - cached.ts < CORR_CACHE_MS) return cached.data;
+
+      // fetch fresh
+      const raw = await fetchCorrelation();
+      corrCacheRef.current = { ts: now, data: raw };
+      return raw;
+    }
 
     async function tick() {
       try {
@@ -374,15 +387,12 @@ export default function useMarketState({
           // ---- Nodes (cap to 25 + ensure ids) ----
           let nodes = Array.isArray(nextState.nodes) ? nextState.nodes : [];
 
-          // If backend sends more than 25 nodes, keep the first 25
-          // (or apply your own ordering upstream)
           nodes = nodes.slice(0, maxAssets).map((n) => ({
             ...n,
             id: n.id ?? n.symbol ?? n.ticker ?? n.label,
             label: n.label ?? n.id ?? n.symbol ?? n.ticker,
           }));
 
-          // If backend sends none, use mock nodes for UI stability
           if (!nodes.length && enableMockFallback) {
             nodes = makeMockState(Date.now(), universe).nodes;
           }
@@ -391,22 +401,20 @@ export default function useMarketState({
           const pca = Number(risk.pca ?? 0);
           const stress = Number(risk.stress ?? 0);
 
-          // Ensure anomaly exists even if backend doesn't provide it
           const enrichedNodes = nodes.map((n) => ({
             ...n,
             anomaly: n.anomaly ?? computeAnomalyScore(n),
           }));
 
-          // Ensure regime exists even if backend doesn't provide it
           const regime =
             nextState.regime && typeof nextState.regime === "object"
               ? nextState.regime
               : computeRegime({ pca, stress });
 
           // ---- Edges ----
-          // Prefer backend edges if provided; otherwise, try to derive from correlation matrix.
           let edges = Array.isArray(nextState.edges) ? nextState.edges : [];
 
+          // Prefer backend edges; otherwise derive from correlation matrix fields in /state
           if (!edges.length) {
             const derivedEdges = corrToEdges({
               nodes: enrichedNodes,
@@ -417,15 +425,28 @@ export default function useMarketState({
             if (derivedEdges?.length) edges = derivedEdges;
           }
 
+          // If still no edges, try fetching /correlation (your nested dict)
+          let corrFromEndpoint = null;
+          if (!edges.length) {
+            try {
+              corrFromEndpoint = await getCorrCached();
+              const derivedEdges = corrToEdges({
+                nodes: enrichedNodes,
+                corr: corrFromEndpoint,
+              });
+              if (derivedEdges?.length) edges = derivedEdges;
+            } catch {
+              // ignore; we'll fall back to mock edges below if enabled
+            }
+          }
+
           // If still no edges and mock is allowed, fall back to dense mock edges
           if (!edges.length && enableMockFallback) {
             edges = makeMockState(Date.now(), universe).edges;
           }
 
-          // Enrich with spike fields
           const enrichedEdges = buildEdgeDelta(edges, prevEdgesMapRef.current);
 
-          // Forecast: normalize into full ML-output shape
           const forecast = normalizeForecast(
             nextState.forecast,
             enrichedNodes,
@@ -433,14 +454,37 @@ export default function useMarketState({
             nextState.ts ?? Date.now()
           );
 
-          setState({
+          // ✅ Build finalState ONCE (this is what you're passing to React)
+          const finalState = {
             ...nextState,
+            // keep whatever backend already includes, but also attach corr if we fetched it
+            corr: nextState.corr ?? corrFromEndpoint ?? undefined,
             nodes: enrichedNodes,
             edges: enrichedEdges,
             regime,
             forecast,
             ts: nextState.ts ?? Date.now(),
-          });
+          };
+
+          // ✅ LOG EVERY TICK
+          console.groupCollapsed(
+            `📦 /state tick @ ${new Date(finalState.ts).toLocaleTimeString()} | nodes=${finalState.nodes?.length ?? 0} edges=${finalState.edges?.length ?? 0} source=${
+              data && typeof data === "object" ? "api" : "mock"
+            }`
+          );
+          console.log("finalState:", finalState);
+          console.log("risk:", finalState.risk);
+          console.log("regime:", finalState.regime);
+          console.log("forecast:", finalState.forecast);
+          console.log("sample node:", finalState.nodes?.[0]);
+          console.log("sample edges:", finalState.edges?.slice?.(0, 5));
+          console.groupEnd();
+
+          // ✅ Expose globally so you can type __MARKET_STATE__ in console
+          window.__MARKET_STATE__ = finalState;
+
+          // ✅ Update React
+          setState(finalState);
 
           setStatus({
             ok: !!(data && typeof data === "object"),

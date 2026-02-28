@@ -11,6 +11,8 @@ import Controls from "../components/Controls.jsx";
 import Timeline from "../components/Timeline.jsx";
 import CorrelationHeatmap from "../components/CorrelationHeatmap.jsx";
 
+import { corrDictToMatrix } from "../api/transform";
+
 /* ---------- Small inline components (no new file needed) ---------- */
 
 function ScorePill({ value }) {
@@ -281,6 +283,31 @@ export default function Dashboard() {
   // A bit less than 0.85 so the graph doesn't feel cramped under the navbar
   const graphHeight = Math.max(520, Math.round(vh * 0.78));
 
+  // --- NEW: heatmap input normalization (keeps existing functionality) ---
+  // CorrelationHeatmap gets the same prop name as before: corrMatrix
+  // but we ensure it receives { assets, matrix } even if backend gives nested dict.
+  const corrMatrixForHeatmap = useMemo(() => {
+    const raw = state?.corr_matrix ?? state?.corrMatrix ?? null;
+
+    // If already in recommended format, pass through
+    if (raw && typeof raw === "object" && Array.isArray(raw.assets) && Array.isArray(raw.matrix)) {
+      return raw;
+    }
+
+    // If backend provides nested dict under state.corr, transform it
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      // raw is likely nested dict
+      return corrDictToMatrix(raw);
+    }
+
+    // If correlation dict is stored on state.corr (from hook fallback), use it
+    if (state?.corr && typeof state.corr === "object") {
+      return corrDictToMatrix(state.corr);
+    }
+
+    return null;
+  }, [state]);
+
   return (
     <div className="min-h-screen bg-bg text-text">
       <Navbar status={status} regime={regime} />
@@ -297,8 +324,7 @@ export default function Dashboard() {
         {/* Graph area */}
         <div
           className="relative w-full overflow-hidden z-0"
-          style={{ height: graphHeight + 320
-           }}
+          style={{ height: graphHeight + 320 }}
         >
           <NetworkGraph nodes={nodes} edges={edges} height={graphHeight} />
         </div>
@@ -351,7 +377,10 @@ export default function Dashboard() {
               </span>
               <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-bg/40 text-[11px] text-muted">
                 <span className="h-2 w-2 rounded-full bg-purple-300/80" />
-                threshold {controls?.threshold != null ? Number(controls.threshold).toFixed(2) : "—"}
+                threshold{" "}
+                {controls?.threshold != null
+                  ? Number(controls.threshold).toFixed(2)
+                  : "—"}
               </span>
             </div>
           </div>
@@ -448,7 +477,8 @@ export default function Dashboard() {
                 <div className="relative">
                   <Panel title="Correlation Matrix" right="rolling corr">
                     <div className="rounded-2xl border border-border/60 bg-bg/30 p-3">
-                      <CorrelationHeatmap corrMatrix={state?.corr_matrix} />
+                      {/* KEEP SAME PROP NAME; now guaranteed to be normalized */}
+                      <CorrelationHeatmap corrMatrix={corrMatrixForHeatmap} />
                     </div>
 
                     <div className="mt-3 text-[11px] text-muted flex flex-wrap items-center justify-between gap-2">
