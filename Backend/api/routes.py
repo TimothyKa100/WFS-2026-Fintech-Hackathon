@@ -1,5 +1,6 @@
 # backend/api/routes.py
 
+from services.asset_overview import get_asset_overview
 from fastapi import APIRouter, Query, HTTPException
 from datetime import datetime
 
@@ -119,3 +120,16 @@ def get_correlation(
 @router.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@router.get("/asset-overview")
+def asset_overview(asset: str):
+    """
+    Returns a hardcoded AI-style overview for selected asset.
+    """
+    overview = get_asset_overview(asset)
+
+    return {
+        "asset": asset,
+        "overview": overview
+    }
