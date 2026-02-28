@@ -73,7 +73,9 @@ export default function NetworkGraph({
         };
       })
       // optionally remove very weak edges
-      .filter((e) => Math.abs(Number(e.absWeight ?? Math.abs(e.weight))) >= minAbsCorr);
+      .filter(
+        (e) => Math.abs(Number(e.absWeight ?? Math.abs(e.weight))) >= minAbsCorr
+      );
 
     // Build adjacency: for each nodeId, list incident edges with absWeight
     const adj = new Map();
@@ -141,145 +143,166 @@ export default function NetworkGraph({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <div className="text-xs text-muted">Search</div>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="BTC / ETH / SOL…"
-            className="w-48 bg-panel2 border border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-muted/60"
-          />
-          <button
-            className="text-xs px-3 py-2 rounded-xl border border-border bg-panel2 hover:border-muted/40 transition"
-            onClick={() => {
-              if (highlightedId) focusNodeById(highlightedId);
-            }}
-            disabled={!highlightedId}
-          >
-            Focus
-          </button>
-        </div>
+      {/* CARD: graph + controls (controls are BELOW graph, not clipped) */}
+      <div className="rounded-2xl border border-border bg-bg">
+        {/* Only the graph area is overflow-hidden */}
+        <div className="overflow-hidden rounded-2xl">
+          <ForceGraph2D
+            ref={fgRef}
+            graphData={graphData}
+            height={height}
+            backgroundColor="#0b0f14"
+            nodeRelSize={5}
+            nodeCanvasObject={(node, ctx, globalScale) => {
+              const label = node.label || node.id;
+              const r = 6;
 
-        <button
-          className="text-xs px-3 py-2 rounded-xl border border-border bg-panel2 hover:border-muted/40 transition"
-          onClick={() => {
-            setSelected(null);
-            fgRef.current?.zoomToFit?.(350, 60);
-          }}
-        >
-          Reset view
-        </button>
-      </div>
+              const group = node.group || "default";
+              const fill =
+                group === "majors"
+                  ? "rgba(34,197,94,0.95)"
+                  : group === "alts"
+                  ? "rgba(59,130,246,0.95)"
+                  : "rgba(148,163,184,0.95)";
 
-      <div className="rounded-2xl border border-border bg-bg overflow-hidden">
-        <ForceGraph2D
-          ref={fgRef}
-          graphData={graphData}
-          height={height}
-          backgroundColor="#0b0f14"
-          nodeRelSize={5}
-          nodeCanvasObject={(node, ctx, globalScale) => {
-            const label = node.label || node.id;
-            const r = 6;
+              // anomaly halo
+              const anomaly = clamp01(Number(node.anomaly ?? 0));
+              if (anomaly > 0.02) {
+                const haloR = r + 6 + 18 * anomaly;
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, haloR, 0, 2 * Math.PI, false);
+                ctx.fillStyle = `rgba(250, 204, 21, ${0.06 + 0.18 * anomaly})`;
+                ctx.fill();
 
-            const group = node.group || "default";
-            const fill =
-              group === "majors"
-                ? "rgba(34,197,94,0.95)"
-                : group === "alts"
-                ? "rgba(59,130,246,0.95)"
-                : "rgba(148,163,184,0.95)";
+                ctx.beginPath();
+                ctx.arc(
+                  node.x,
+                  node.y,
+                  r + 6 + 8 * anomaly,
+                  0,
+                  2 * Math.PI,
+                  false
+                );
+                ctx.strokeStyle = `rgba(250, 204, 21, ${
+                  0.18 + 0.45 * anomaly
+                })`;
+                ctx.lineWidth = 2 / globalScale;
+                ctx.stroke();
+              }
 
-            // anomaly halo
-            const anomaly = clamp01(Number(node.anomaly ?? 0));
-            if (anomaly > 0.02) {
-              const haloR = r + 6 + 18 * anomaly;
+              // main node
               ctx.beginPath();
-              ctx.arc(node.x, node.y, haloR, 0, 2 * Math.PI, false);
-              ctx.fillStyle = `rgba(250, 204, 21, ${0.06 + 0.18 * anomaly})`;
+              ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
+              ctx.fillStyle = fill;
               ctx.fill();
 
-              ctx.beginPath();
-              ctx.arc(node.x, node.y, r + 6 + 8 * anomaly, 0, 2 * Math.PI, false);
-              ctx.strokeStyle = `rgba(250, 204, 21, ${0.18 + 0.45 * anomaly})`;
-              ctx.lineWidth = 2 / globalScale;
-              ctx.stroke();
+              // search highlight
+              if (highlightedId && node.id === highlightedId) {
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, r + 6, 0, 2 * Math.PI, false);
+                ctx.strokeStyle = "rgba(250,204,21,0.55)";
+                ctx.lineWidth = 3 / globalScale;
+                ctx.stroke();
+              }
+
+              // selected ring
+              if (selected?.id === node.id) {
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, r + 4, 0, 2 * Math.PI, false);
+                ctx.strokeStyle = "rgba(34,197,94,0.35)";
+                ctx.lineWidth = 3 / globalScale;
+                ctx.stroke();
+              }
+
+              // label (hide when zoomed out)
+              const fontSize = 12 / globalScale;
+              if (fontSize > 2.5) {
+                ctx.font = `${fontSize}px sans-serif`;
+                ctx.textAlign = "left";
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = "rgba(229,231,235,0.9)";
+                ctx.fillText(label, node.x + 10, node.y);
+              }
+            }}
+            linkWidth={(link) => {
+              const w = Math.abs(Number(link.weight || 0));
+              const base = 0.5 + 3 * w;
+              const boosted = link.spiked ? base + 2.0 * pulse : base;
+              return boosted;
+            }}
+            linkColor={(link) => {
+              const w = Number(link.weight || 0);
+              const absW = Math.abs(w);
+
+              const baseAlpha = 0.12 + 0.55 * absW;
+              const spikeBoost = link.spiked ? 0.25 * pulse : 0;
+
+              const alpha = clamp01(baseAlpha + spikeBoost);
+
+              return w >= 0
+                ? `rgba(34,197,94,${alpha})`
+                : `rgba(239,68,68,${alpha})`;
+            }}
+            linkLineDash={(link) =>
+              Number(link.weight || 0) < 0 ? [4, 4] : null
             }
+            linkCurvature={0.05}
+            onNodeClick={(node) => {
+              setSelected(node);
+              fgRef.current?.centerAt?.(node.x, node.y, 300);
+              fgRef.current?.zoom?.(2.2, 350);
+            }}
+            onNodeHover={(node) => {
+              const el = document.querySelector("canvas");
+              if (el) el.style.cursor = node ? "pointer" : "default";
+            }}
+            nodeLabel={(node) => {
+              const n = nodeById.get(node.id) || node;
+              const ret =
+                n.ret != null ? (Number(n.ret) * 100).toFixed(2) : "—";
+              const vol =
+                n.vol != null ? (Number(n.vol) * 100).toFixed(1) : "—";
+              const px = n.price != null ? Number(n.price).toFixed(2) : "—";
+              const an =
+                n.anomaly != null
+                  ? (Number(n.anomaly) * 100).toFixed(0)
+                  : "—";
+              return `${n.label || n.id}\nPrice: ${px}\nRet: ${ret}%\nVol: ${vol}%\nAnomaly: ${an}%`;
+            }}
+          />
+        </div>
 
-            // main node
-            ctx.beginPath();
-            ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
-            ctx.fillStyle = fill;
-            ctx.fill();
+        {/* CONTROLS: now BELOW the graph, outside overflow-hidden so they don't vanish */}
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3 border-t border-border bg-panel2">
+          <div className="flex items-center gap-2">
+            <div className="text-xs text-muted">Search</div>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="BTC / ETH / SOL…"
+              className="w-48 bg-bg border border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-muted/60"
+            />
+            <button
+              className="text-xs px-3 py-2 rounded-xl border border-border bg-bg hover:border-muted/40 transition"
+              onClick={() => {
+                if (highlightedId) focusNodeById(highlightedId);
+              }}
+              disabled={!highlightedId}
+            >
+              Focus
+            </button>
+          </div>
 
-            // search highlight
-            if (highlightedId && node.id === highlightedId) {
-              ctx.beginPath();
-              ctx.arc(node.x, node.y, r + 6, 0, 2 * Math.PI, false);
-              ctx.strokeStyle = "rgba(250,204,21,0.55)";
-              ctx.lineWidth = 3 / globalScale;
-              ctx.stroke();
-            }
-
-            // selected ring
-            if (selected?.id === node.id) {
-              ctx.beginPath();
-              ctx.arc(node.x, node.y, r + 4, 0, 2 * Math.PI, false);
-              ctx.strokeStyle = "rgba(34,197,94,0.35)";
-              ctx.lineWidth = 3 / globalScale;
-              ctx.stroke();
-            }
-
-            // label (hide when zoomed out)
-            const fontSize = 12 / globalScale;
-            if (fontSize > 2.5) {
-              ctx.font = `${fontSize}px sans-serif`;
-              ctx.textAlign = "left";
-              ctx.textBaseline = "middle";
-              ctx.fillStyle = "rgba(229,231,235,0.9)";
-              ctx.fillText(label, node.x + 10, node.y);
-            }
-          }}
-          linkWidth={(link) => {
-            const w = Math.abs(Number(link.weight || 0));
-            const base = 0.5 + 3 * w;
-            const boosted = link.spiked ? base + 2.0 * pulse : base;
-            return boosted;
-          }}
-          linkColor={(link) => {
-            const w = Number(link.weight || 0);
-            const absW = Math.abs(w);
-
-            const baseAlpha = 0.12 + 0.55 * absW;
-            const spikeBoost = link.spiked ? 0.25 * pulse : 0;
-
-            const alpha = clamp01(baseAlpha + spikeBoost);
-
-            return w >= 0
-              ? `rgba(34,197,94,${alpha})`
-              : `rgba(239,68,68,${alpha})`;
-          }}
-          linkLineDash={(link) => (Number(link.weight || 0) < 0 ? [4, 4] : null)}
-          linkCurvature={0.05}
-          onNodeClick={(node) => {
-            setSelected(node);
-            fgRef.current?.centerAt?.(node.x, node.y, 300);
-            fgRef.current?.zoom?.(2.2, 350);
-          }}
-          onNodeHover={(node) => {
-            const el = document.querySelector("canvas");
-            if (el) el.style.cursor = node ? "pointer" : "default";
-          }}
-          nodeLabel={(node) => {
-            const n = nodeById.get(node.id) || node;
-            const ret = n.ret != null ? (Number(n.ret) * 100).toFixed(2) : "—";
-            const vol = n.vol != null ? (Number(n.vol) * 100).toFixed(1) : "—";
-            const px = n.price != null ? Number(n.price).toFixed(2) : "—";
-            const an = n.anomaly != null ? (Number(n.anomaly) * 100).toFixed(0) : "—";
-            return `${n.label || n.id}\nPrice: ${px}\nRet: ${ret}%\nVol: ${vol}%\nAnomaly: ${an}%`;
-          }}
-        />
+          <button
+            className="text-xs px-3 py-2 rounded-xl border border-border bg-bg hover:border-muted/40 transition"
+            onClick={() => {
+              setSelected(null);
+              fgRef.current?.zoomToFit?.(350, 60);
+            }}
+          >
+            Reset view
+          </button>
+        </div>
       </div>
 
       <div className="rounded-2xl border border-border bg-panel2 p-3 text-sm">
@@ -343,7 +366,8 @@ export default function NetworkGraph({
         </span>
         <span className="inline-flex items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-slate-300" />
-          Edges: top {topK} per asset{minAbsCorr > 0 ? ` (|corr| ≥ ${minAbsCorr})` : ""}
+          Edges: top {topK} per asset
+          {minAbsCorr > 0 ? ` (|corr| ≥ ${minAbsCorr})` : ""}
         </span>
       </div>
     </div>

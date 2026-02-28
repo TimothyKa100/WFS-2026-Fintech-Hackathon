@@ -1,5 +1,5 @@
 // src/pages/Dashboard.jsx
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import useMarketState from "../hooks/useMarketState";
 
 import Navbar from "../components/layout/Navbar.jsx";
@@ -127,8 +127,7 @@ function VolForecast({ rows = [] }) {
             >
               <div className="text-sm font-semibold text-text">{label}</div>
               <div className="text-[11px] text-muted">
-                pred vol{" "}
-                <span className="text-text font-semibold">{pct}</span>
+                pred vol <span className="text-text font-semibold">{pct}</span>
               </div>
             </div>
           );
@@ -202,6 +201,21 @@ function TopAnomalies({ topAnomalies = [] }) {
   );
 }
 
+/* ---------- Hook: viewport height for full-screen graph ---------- */
+function useViewportHeight() {
+  const [vh, setVh] = useState(
+    typeof window !== "undefined" ? window.innerHeight : 900
+  );
+
+  useEffect(() => {
+    const onResize = () => setVh(window.innerHeight);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  return vh;
+}
+
 export default function Dashboard() {
   const { state, nodes, edges, risk, status, regime, forecast, topAnomalies } =
     useMarketState({
@@ -235,60 +249,53 @@ export default function Dashboard() {
   const volForecast =
     forecast?.vol_forecast ?? forecast?.volForecast ?? forecast?.vols ?? [];
 
+  const vh = useViewportHeight();
+
+  // A bit less than 0.85 so the graph doesn't feel cramped under the navbar
+  const graphHeight = Math.max(520, Math.round(vh * 0.78));
+
   return (
     <div className="min-h-screen bg-bg text-text">
       <Navbar status={status} regime={regime} />
 
-      <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-        {/* HERO: big centered graph */}
-        <Panel
-          title="Contagion Network"
-          right={`${nodes.length} assets • ${edges.length} edges`}
-          className="overflow-hidden"
+      {/* FULL-BLEED CANVAS GRAPH (CLIPPED + vignette) */}
+      <div className="relative w-full border-b border-border bg-bg overflow-hidden isolate">
+        {/* Vignette/gradient so the graph's own top controls/title look intentional */}
+        <div className="pointer-events-none absolute inset-0 z-[1]">
+          <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/35 to-transparent" />
+          <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/25 to-transparent" />
+          <div className="absolute inset-0 [box-shadow:inset_0_0_0_1px_rgba(255,255,255,0.04)]" />
+        </div>
+
+        {/* Graph area */}
+        <div
+          className="relative w-full overflow-hidden z-0"
+          style={{ height: graphHeight+165
+           }}
         >
-          {/* Give it real presence on screen */}
-          <div className="w-full flex items-center justify-center">
-            <NetworkGraph nodes={nodes} edges={edges} height={720} />
-          </div>
+          <NetworkGraph nodes={nodes} edges={edges} height={graphHeight} />
+        </div>
+      </div>
 
-          {/* Optional: subtle hint row under hero (keeps same meaning as your legend line in screenshots) */}
-          <div className="mt-4 pt-4 border-t border-border text-[11px] text-muted flex flex-wrap gap-x-4 gap-y-2">
-            <span>• Positive corr</span>
-            <span>• Negative corr (dashed)</span>
-            <span>• Anomaly halo</span>
-            <span>• Correlation spike (pulse)</span>
-            <span>• Edges: top 3 per asset</span>
-          </div>
-        </Panel>
+      {/* BELOW: panels in a clean grid */}
+      <div className="px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <Panel title="System Risk" right={systemRiskRight} className="h-full">
+            <RiskGauge risk={risk} />
+            <VolForecast rows={volForecast} />
+            <TrendSignals up={trendUp} down={trendDown} />
+            <TopAnomalies topAnomalies={topAnomalies} />
+          </Panel>
 
-        {/* BELOW: everything else, aligned + consistent */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* System Risk + ML */}
-          <div className="lg:col-span-4">
-            <Panel title="System Risk" right={systemRiskRight} className="h-full">
-              <RiskGauge risk={risk} />
-              <VolForecast rows={volForecast} />
-              <TrendSignals up={trendUp} down={trendDown} />
-              <TopAnomalies topAnomalies={topAnomalies} />
-            </Panel>
-          </div>
+          <Panel title="Controls" right={controlsRight} className="h-full">
+            <Controls initial={controls} onChange={setControls} />
+          </Panel>
 
-          {/* Controls */}
-          <div className="lg:col-span-4">
-            <Panel title="Controls" right={controlsRight} className="h-full">
-              <Controls initial={controls} onChange={setControls} />
-            </Panel>
-          </div>
+          <Panel title="Timeline" className="h-full">
+            <Timeline risk={risk} historyFromApi={state?.history} />
+          </Panel>
 
-          {/* Timeline */}
-          <div className="lg:col-span-4">
-            <Panel title="Timeline" className="h-full">
-              <Timeline risk={risk} historyFromApi={state?.history} />
-            </Panel>
-          </div>
-
-          {/* Correlation heatmap: full width row under those three, still “beneath” hero */}
-          <div className="lg:col-span-12">
+          <div className="xl:col-span-3">
             <Panel title="Correlation Matrix" right="rolling corr">
               <CorrelationHeatmap corrMatrix={state?.corr_matrix} />
             </Panel>
