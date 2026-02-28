@@ -505,7 +505,7 @@ class OptimizedModel:
         print("Preparing data for training...")
         t0 = time.monotonic()
 
-        target_long = df_target.astype(np.float32).sort_index(ascending=True).stack()
+        target_long = df_target.astype(np.float16).sort_index(ascending=True).stack()
         target_long.name = "target"
 
         common_index = target_long.index
@@ -515,7 +515,7 @@ class OptimizedModel:
         factor_long = []
         for ind, df in factor_dfs.items():
             factor = (
-                df.astype(np.float32)
+                df.astype(np.float16)
                 .replace([np.inf, -np.inf], np.nan)
                 .sort_index(ascending=True)
                 .stack()
@@ -1243,7 +1243,7 @@ class OptimizedModel:
             features_dfs_to_use[key] = raw_dfs[key]
 
         for key in derived_factors:
-            if key not in derived_dfs:
+            if key not in derived_factors:
                 print(f"Warning: {key} not found in derived_dfs, skipping.")
                 continue
 
