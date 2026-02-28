@@ -270,35 +270,44 @@ export default function Dashboard() {
         {/* Graph area */}
         <div
           className="relative w-full overflow-hidden z-0"
-          style={{ height: graphHeight+165
-           }}
+          style={{ height: graphHeight + 165 }}
         >
           <NetworkGraph nodes={nodes} edges={edges} height={graphHeight} />
         </div>
       </div>
 
       {/* BELOW: panels in a clean grid */}
-      <div className="px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          <Panel title="System Risk" right={systemRiskRight} className="h-full">
-            <RiskGauge risk={risk} />
-            <VolForecast rows={volForecast} />
-            <TrendSignals up={trendUp} down={trendDown} />
-            <TopAnomalies topAnomalies={topAnomalies} />
-          </Panel>
-
-          <Panel title="Controls" right={controlsRight} className="h-full">
-            <Controls initial={controls} onChange={setControls} />
-          </Panel>
-
-          <Panel title="Timeline" className="h-full">
-            <Timeline risk={risk} historyFromApi={state?.history} />
-          </Panel>
-
-          <div className="xl:col-span-3">
-            <Panel title="Correlation Matrix" right="rolling corr">
-              <CorrelationHeatmap corrMatrix={state?.corr_matrix} />
+      <div className="px-4 sm:px-6 lg:px-8 py-8 space-y-8 max-w-[1600px] mx-auto">
+        {/* 12-col “terminal-style” dashboard grid */}
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+          {/* Left rail: System Risk */}
+          <div className="xl:col-span-4">
+            <Panel title="System Risk" right={systemRiskRight} className="h-full">
+              <RiskGauge risk={risk} />
+              <VolForecast rows={volForecast} />
+              <TrendSignals up={trendUp} down={trendDown} />
+              <TopAnomalies topAnomalies={topAnomalies} />
             </Panel>
+          </div>
+
+          {/* Right: Controls + Timeline + Correlation Matrix stacked */}
+          <div className="xl:col-span-8">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <Panel title="Controls" right={controlsRight} className="h-full">
+                <Controls initial={controls} onChange={setControls} />
+              </Panel>
+
+              <Panel title="Timeline" className="h-full">
+                <Timeline risk={risk} historyFromApi={state?.history} />
+              </Panel>
+            </div>
+
+            {/* Correlation Matrix below Controls + Timeline */}
+            <div className="mt-6">
+              <Panel title="Correlation Matrix" right="rolling corr">
+                <CorrelationHeatmap corrMatrix={state?.corr_matrix} />
+              </Panel>
+            </div>
           </div>
         </div>
 

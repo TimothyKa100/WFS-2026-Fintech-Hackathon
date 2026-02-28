@@ -166,29 +166,19 @@ export default function NetworkGraph({
                   : "rgba(148,163,184,0.95)";
 
               // anomaly halo
-              const anomaly = clamp01(Number(node.anomaly ?? 0));
-              if (anomaly > 0.02) {
-                const haloR = r + 6 + 18 * anomaly;
-                ctx.beginPath();
-                ctx.arc(node.x, node.y, haloR, 0, 2 * Math.PI, false);
-                ctx.fillStyle = `rgba(250, 204, 21, ${0.06 + 0.18 * anomaly})`;
-                ctx.fill();
+              // anomaly indicator (subtle glow + thin ring)
+            // much smaller anomaly ring
+            const anomaly = clamp01(Number(node.anomaly ?? 0));
+
+            if (anomaly > 0.02) {
+                const ringR = r + 2 + 3 * anomaly; // WAS big, now tiny
 
                 ctx.beginPath();
-                ctx.arc(
-                  node.x,
-                  node.y,
-                  r + 6 + 8 * anomaly,
-                  0,
-                  2 * Math.PI,
-                  false
-                );
-                ctx.strokeStyle = `rgba(250, 204, 21, ${
-                  0.18 + 0.45 * anomaly
-                })`;
-                ctx.lineWidth = 2 / globalScale;
+                ctx.arc(node.x, node.y, ringR, 0, 2 * Math.PI, false);
+                ctx.strokeStyle = `rgba(250, 204, 21, ${0.2 + 0.4 * anomaly})`;
+                ctx.lineWidth = (1 + 1 * anomaly) / globalScale; // thinner
                 ctx.stroke();
-              }
+            }
 
               // main node
               ctx.beginPath();
