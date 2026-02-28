@@ -83,6 +83,34 @@ def get_yfinance_data(token="BTC-USD", interval="15m", days_from_today=1):
         return None
 
 
+def get_yfinance_data_for_date(token: str, date_str: str, interval="15m"):
+    """
+    Pull intraday data for a specific date (YYYY-MM-DD)
+    """
+    import yfinance as yf
+    from datetime import datetime, timedelta
+
+    start_date = datetime.strptime(date_str, "%Y-%m-%d")
+    end_date = start_date + timedelta(days=1)
+
+    df = yf.download(
+        tickers=token,
+        start=start_date,
+        end=end_date,
+        interval=interval,
+        progress=False
+    )
+
+    if df.empty:
+        return None
+
+    df = df.reset_index()
+    df = df.rename(columns={df.columns[0]: "Timestamp"})
+    df = df[["Timestamp", "Open", "High", "Low", "Close", "Volume"]]
+
+    return df
+
+
 if __name__ == "__main__":
     # Pulling the S&P 500 Index
     get_yfinance_data("^GSPC", "15m", 3)
