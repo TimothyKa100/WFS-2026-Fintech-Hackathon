@@ -3,14 +3,19 @@
 const API_BASE =
   (import.meta.env.VITE_API_BASE || "http://localhost:8000").replace(/\/$/, "");
 
+// Core request helper
 async function request(path, options = {}) {
   const url = `${API_BASE}${path}`;
+
+  // Only set Content-Type when we actually send a body (avoids extra CORS preflights)
+  const headers = { ...(options.headers || {}) };
+  if (options.body && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+
   const res = await fetch(url, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
     ...options,
+    headers,
   });
 
   if (!res.ok) {
@@ -50,6 +55,18 @@ export function postControls(payload) {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+/**
+ * Fetch the raw correlation matrix (nested dict) from backend:
+ * {
+ *   "Bitcoin": { "Bitcoin": 1, "Ethereum": 0.88, ... },
+ *   "Ethereum": { "Bitcoin": 0.88, "Ethereum": 1, ... },
+ *   ...
+ * }
+ */
+export function fetchCorrelation() {
+  return request("/correlation");
 }
 
 export { API_BASE };

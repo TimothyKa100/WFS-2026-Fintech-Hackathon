@@ -1,18 +1,22 @@
 // src/components/NetworkGraph.jsx
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
 
+// Persist layout across refreshes
+const POS_KEY = "contagion_graph_positions_v2";
+
 /**
  * Renders a contagion network.
- * CHANGE: Only renders edges that are among the top-K (default 3)
- * most-correlated edges PER NODE (by |weight|).
  *
- * Notes:
- * - Works best if `edges` includes a dense set of pairwise correlations
- *   (or at least enough edges per node to choose top 3).
- * - If your backend already sends a sparse list, this will further sparsify it.
+ * Behavior:
+ * - Graph "expands" once (force sim runs) then freezes in place.
+ * - Node positions are persisted to localStorage so refreshes don't re-layout/jump.
+ * - Nodes remain fixed (via fx/fy) unless moved by the user.
+ * - User can drag nodes; on drop, the node stays pinned where released (and is saved).
+ * - Edges/data can keep updating; node positions are preserved.
+ * - Only renders edges that are among the top-K most-correlated edges PER NODE (by |weight|).
  */
 export default function NetworkGraph({
   nodes = [],
@@ -24,6 +28,57 @@ export default function NetworkGraph({
   const fgRef = useRef(null);
   const [selected, setSelected] = useState(null);
   const [query, setQuery] = useState("");
+  const [frozen, setFrozen] = useState(false);
+
+  // Keep stable node objects across updates so x/y do not reset.
+  // id -> nodeObject (mutated by ForceGraph / d3)
+  const nodesMapRef = useRef(new Map());
+
+  // Saved positions cache (localStorage mirror)
+  const savedPosRef = useRef({});
+
+  // Load saved positions once
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(POS_KEY);
+      savedPosRef.current = raw ? JSON.parse(raw) : {};
+    } catch {
+      savedPosRef.current = {};
+    }
+  }, []);
+
+  const saveAllPositions = () => {
+    const gd = fgRef.current?.graphData?.();
+    if (!gd?.nodes?.length) return;
+
+    const out = {};
+    for (const n of gd.nodes) {
+      if (n?.id == null) continue;
+      const x = n.fx ?? n.x;
+      const y = n.fy ?? n.y;
+      if (x == null || y == null) continue;
+      out[n.id] = { x, y };
+    }
+
+    try {
+      localStorage.setItem(POS_KEY, JSON.stringify(out));
+      savedPosRef.current = out;
+    } catch {}
+  };
+
+  const saveOnePosition = (node) => {
+    if (!node?.id) return;
+    const x = node.fx ?? node.x;
+    const y = node.fy ?? node.y;
+    if (x == null || y == null) return;
+
+    const next = { ...(savedPosRef.current || {}), [node.id]: { x, y } };
+    savedPosRef.current = next;
+
+    try {
+      localStorage.setItem(POS_KEY, JSON.stringify(next));
+    } catch {}
+  };
 
   const q = query.trim().toLowerCase();
 
@@ -42,20 +97,68 @@ export default function NetworkGraph({
   }, [nodes]);
 
   function focusNodeById(id) {
-    const n = nodeById.get(id);
+    const gd = fgRef.current?.graphData?.();
+    const n =
+      (gd?.nodes || []).find((x) => x?.id === id) ||
+      nodeById.get(id) ||
+      null;
     if (!n) return;
+
     setSelected(n);
     fgRef.current?.centerAt?.(n.x, n.y, 300);
     fgRef.current?.zoom?.(2.2, 350);
   }
 
   // --- Contagion "pulse" based on time. Works for mock + live ---
-  const nowMs = Date.now();
-  const pulse = useMemo(() => 0.5 + 0.5 * Math.sin(nowMs / 180), [nowMs]);
+  // NOTE: even if edges/weights don't change, re-renders will redraw the canvas.
+  const pulse = useMemo(() => 0.5 + 0.5 * Math.sin(Date.now() / 180), []);
 
-  // ---------- NEW: Top-K per node edge selection ----------
+  /**
+   * Build graphData with:
+   * 1) Stable nodes (preserve x/y/fx/fy across streaming updates)
+   * 2) Restored positions from localStorage (no refresh jump)
+   * 3) Top-K per node edge selection (STABLE + deterministic)
+   */
   const graphData = useMemo(() => {
-    const safeNodes = nodes || [];
+    const incomingNodes = nodes || [];
+    const map = nodesMapRef.current;
+
+    // Upsert/merge node fields WITHOUT overwriting simulation coords.
+    for (const n of incomingNodes) {
+      if (n?.id == null) continue;
+
+      const saved = savedPosRef.current?.[n.id];
+      const prev = map.get(n.id);
+
+      if (prev) {
+        Object.assign(prev, n);
+
+        if (saved && (prev.fx == null || prev.fy == null)) {
+          prev.fx = saved.x;
+          prev.fy = saved.y;
+          prev.x = prev.x ?? saved.x;
+          prev.y = prev.y ?? saved.y;
+        }
+
+        if (frozen && prev.x != null && prev.y != null) {
+          prev.fx = prev.fx ?? prev.x;
+          prev.fy = prev.fy ?? prev.y;
+        }
+      } else {
+        const nn = saved
+          ? { ...n, fx: saved.x, fy: saved.y, x: saved.x, y: saved.y }
+          : { ...n };
+        map.set(n.id, nn);
+      }
+    }
+
+    // Optional: remove nodes that no longer exist in incoming list
+    const incomingIds = new Set(incomingNodes.map((n) => n?.id));
+    for (const id of Array.from(map.keys())) {
+      if (!incomingIds.has(id)) map.delete(id);
+    }
+
+    const safeNodes = Array.from(map.values());
 
     // Normalize incoming edges while preserving extra fields
     const normalized = (edges || [])
@@ -72,7 +175,6 @@ export default function NetworkGraph({
           spiked: !!e.spiked,
         };
       })
-      // optionally remove very weak edges
       .filter(
         (e) => Math.abs(Number(e.absWeight ?? Math.abs(e.weight))) >= minAbsCorr
       );
@@ -101,6 +203,35 @@ export default function NetworkGraph({
       return su < sv ? `${su}||${sv}` : `${sv}||${su}`;
     };
 
+    // ✅ Deterministic sort tie-breaker to stop topK flipping between renders
+    const stableSortAdjList = (list) => {
+      list.sort((x, y) => {
+        const d = (y.absW ?? 0) - (x.absW ?? 0);
+        if (d !== 0) return d;
+
+        // tie 1: by "other" id
+        const xo = String(x.other);
+        const yo = String(y.other);
+        if (xo !== yo) return xo.localeCompare(yo);
+
+        // tie 2: by endpoints (source|target)
+        const xs = String(
+          typeof x.edge.source === "object" ? x.edge.source.id : x.edge.source
+        );
+        const xt = String(
+          typeof x.edge.target === "object" ? x.edge.target.id : x.edge.target
+        );
+        const ys = String(
+          typeof y.edge.source === "object" ? y.edge.source.id : y.edge.source
+        );
+        const yt = String(
+          typeof y.edge.target === "object" ? y.edge.target.id : y.edge.target
+        );
+
+        return `${xs}|${xt}`.localeCompare(`${ys}|${yt}`);
+      });
+    };
+
     for (const n of safeNodes) {
       const id = n?.id;
       if (id == null) continue;
@@ -108,17 +239,15 @@ export default function NetworkGraph({
       const list = adj.get(id) || [];
       if (!list.length) continue;
 
-      // sort descending by abs corr
-      list.sort((x, y) => (y.absW ?? 0) - (x.absW ?? 0));
+      stableSortAdjList(list);
 
-      // take topK (or fewer)
       for (let i = 0; i < Math.min(topK, list.length); i++) {
         const other = list[i].other;
         pickedKeys.add(edgeKey(id, other));
       }
     }
 
-    // Keep edge if it was selected by either endpoint (since we used undirected keys)
+    // Keep edge if it was selected by either endpoint (undirected keys)
     const links = normalized
       .filter((e) => {
         const a = typeof e.source === "object" ? e.source.id : e.source;
@@ -126,26 +255,66 @@ export default function NetworkGraph({
         if (a == null || b == null) return false;
         return pickedKeys.has(edgeKey(a, b));
       })
-      .map((e) => ({
-        // ForceGraph wants links with source/target ids
-        source: typeof e.source === "object" ? e.source.id : e.source,
-        target: typeof e.target === "object" ? e.target.id : e.target,
-        weight: e.weight,
-        absWeight: e.absWeight,
-        deltaAbsWeight: e.deltaAbsWeight,
-        spiked: e.spiked,
-        // preserve any extra fields
-        ...e,
-      }));
+      .map((e) => {
+        // ✅ Spread FIRST, then enforce source/target ids LAST
+        const src = typeof e.source === "object" ? e.source.id : e.source;
+        const tgt = typeof e.target === "object" ? e.target.id : e.target;
+
+        return {
+          ...e,
+          source: src,
+          target: tgt,
+          weight: e.weight,
+          absWeight: e.absWeight,
+          deltaAbsWeight: e.deltaAbsWeight,
+          spiked: e.spiked,
+        };
+      });
 
     return { nodes: safeNodes, links };
-  }, [nodes, edges, topK, minAbsCorr]);
+  }, [nodes, edges, topK, minAbsCorr, frozen]);
+
+  /**
+   * Freeze all nodes in place (fx/fy) and persist layout.
+   */
+  const freezeAllNodes = () => {
+    const gd = fgRef.current?.graphData?.();
+    if (!gd?.nodes?.length) return;
+
+    gd.nodes.forEach((n) => {
+      if (n?.x == null || n?.y == null) return;
+      n.fx = n.fx ?? n.x;
+      n.fy = n.fy ?? n.y;
+    });
+
+    saveAllPositions();
+    setFrozen(true);
+  };
+
+  /**
+   * If new nodes appear AFTER frozen, briefly reheat, then freeze+persist again.
+   */
+  useEffect(() => {
+    if (!frozen) return;
+
+    const gd = fgRef.current?.graphData?.();
+    const hasUnplaced = (gd?.nodes || []).some(
+      (n) => n?.x == null || n?.y == null
+    );
+
+    if (hasUnplaced) {
+      fgRef.current?.resumeAnimation?.();
+      const t = setTimeout(() => {
+        freezeAllNodes();
+        fgRef.current?.pauseAnimation?.();
+      }, 700);
+      return () => clearTimeout(t);
+    }
+  }, [graphData, frozen]);
 
   return (
     <div className="space-y-3">
-      {/* CARD: graph + controls (controls are BELOW graph, not clipped) */}
       <div className="rounded-2xl border border-border bg-bg">
-        {/* Only the graph area is overflow-hidden */}
         <div className="overflow-hidden rounded-2xl">
           <ForceGraph2D
             ref={fgRef}
@@ -153,35 +322,45 @@ export default function NetworkGraph({
             height={height}
             backgroundColor="#0b0f14"
             nodeRelSize={5}
+            linkCurvature={0.05}
+            cooldownTicks={frozen ? 0 : 140}
+            d3VelocityDecay={0.35}
+            onEngineStop={() => {
+              freezeAllNodes();
+              fgRef.current?.pauseAnimation?.();
+            }}
+            enableNodeDrag={true}
+            onNodeDrag={(node) => {
+              node.fx = node.x;
+              node.fy = node.y;
+            }}
+            onNodeDragEnd={(node) => {
+              node.fx = node.x;
+              node.fy = node.y;
+              saveOnePosition(node);
+            }}
             nodeCanvasObject={(node, ctx, globalScale) => {
               const label = node.label || node.id;
               const r = 6;
+              const fill = "rgba(59,130,246,0.95)";
 
-              const group = node.group || "default";
-              const fill = "rgba(59,130,246,0.95)"; // all blue
-
-              // anomaly halo
-              // anomaly indicator (subtle glow + thin ring)
-              // much smaller anomaly ring
               const anomaly = clamp01(Number(node.anomaly ?? 0));
 
               if (anomaly > 0.02) {
-                const ringR = r + 2 + 3 * anomaly; // WAS big, now tiny
+                const ringR = r + 2 + 3 * anomaly;
 
                 ctx.beginPath();
                 ctx.arc(node.x, node.y, ringR, 0, 2 * Math.PI, false);
                 ctx.strokeStyle = `rgba(250, 204, 21, ${0.2 + 0.4 * anomaly})`;
-                ctx.lineWidth = (1 + 1 * anomaly) / globalScale; // thinner
+                ctx.lineWidth = (1 + 1 * anomaly) / globalScale;
                 ctx.stroke();
               }
 
-              // main node
               ctx.beginPath();
               ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
               ctx.fillStyle = fill;
               ctx.fill();
 
-              // search highlight
               if (highlightedId && node.id === highlightedId) {
                 ctx.beginPath();
                 ctx.arc(node.x, node.y, r + 6, 0, 2 * Math.PI, false);
@@ -190,7 +369,6 @@ export default function NetworkGraph({
                 ctx.stroke();
               }
 
-              // selected ring
               if (selected?.id === node.id) {
                 ctx.beginPath();
                 ctx.arc(node.x, node.y, r + 4, 0, 2 * Math.PI, false);
@@ -199,7 +377,6 @@ export default function NetworkGraph({
                 ctx.stroke();
               }
 
-              // label (hide when zoomed out)
               const fontSize = 12 / globalScale;
               if (fontSize > 2.5) {
                 ctx.font = `${fontSize}px sans-serif`;
@@ -231,7 +408,6 @@ export default function NetworkGraph({
             linkLineDash={(link) =>
               Number(link.weight || 0) < 0 ? [4, 4] : null
             }
-            linkCurvature={0.05}
             onNodeClick={(node) => {
               setSelected(node);
               fgRef.current?.centerAt?.(node.x, node.y, 300);
@@ -257,7 +433,7 @@ export default function NetworkGraph({
           />
         </div>
 
-        {/* CONTROLS: revamped visual (same handlers/state, just styling/layout) */}
+        {/* CONTROLS */}
         <div className="p-3 border-t border-border">
           <div className="rounded-2xl border border-border bg-panel2/70 backdrop-blur-sm shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
             <div className="flex flex-wrap items-center justify-between gap-3 p-3">
@@ -324,7 +500,7 @@ export default function NetworkGraph({
               </div>
             </div>
 
-            {/* Subtle divider + status strip */}
+            {/* Status strip */}
             <div className="border-t border-border/80 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
               <div className="text-[11px] text-muted flex items-center gap-2">
                 <span className="inline-flex items-center gap-2">
@@ -349,13 +525,16 @@ export default function NetworkGraph({
                 <span className="px-2 py-0.5 rounded-full border border-border bg-bg/50">
                   Links: {(graphData?.links || []).length}
                 </span>
+                <span className="px-2 py-0.5 rounded-full border border-border bg-bg/50">
+                  Layout: {frozen ? "fixed (drag to move)" : "settling…"}
+                </span>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Selected node panel (revamped visual only) */}
+      {/* Selected node panel */}
       <div className="rounded-2xl border border-border bg-panel2 p-3">
         {selected ? (
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -377,7 +556,9 @@ export default function NetworkGraph({
               <span className="px-2.5 py-1 rounded-full border border-border bg-bg/50 text-xs text-muted">
                 price{" "}
                 <span className="text-text font-semibold">
-                  {selected.price != null ? Number(selected.price).toFixed(2) : "—"}
+                  {selected.price != null
+                    ? Number(selected.price).toFixed(2)
+                    : "—"}
                 </span>
               </span>
 
@@ -436,7 +617,7 @@ export default function NetworkGraph({
         )}
       </div>
 
-      {/* Legend (revamped visual only) */}
+      {/* Legend */}
       <div className="rounded-2xl border border-border bg-panel2/60 p-3">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
           <div className="text-[11px] uppercase tracking-wider text-muted">
@@ -477,6 +658,11 @@ export default function NetworkGraph({
             <span className="h-2 w-2 rounded-full bg-slate-300" />
             Edges: top {topK} per asset
             {minAbsCorr > 0 ? ` (|corr| ≥ ${minAbsCorr})` : ""}
+          </span>
+
+          <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border border-border bg-bg/50 text-muted">
+            <span className="h-2 w-2 rounded-full bg-slate-300" />
+            Layout: {frozen ? "fixed (drag to move)" : "settling…"}
           </span>
         </div>
       </div>
