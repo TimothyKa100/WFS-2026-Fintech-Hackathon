@@ -18,5 +18,9 @@ class Config:
     # Threshold for "Contagion" (Correlation coefficient)
     STRESS_THRESHOLD = 0.75
 
+    # Rolling z-score anomaly detection settings
+    ANOMALY_Z_WINDOW = 96
+    ANOMALY_Z_THRESHOLD = 3.0
+
 
 config = Config()

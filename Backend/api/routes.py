@@ -16,6 +16,11 @@ def get_correlation():
     return store.get("correlation_matrix")
 
 
+@router.get("/anomalies")
+def get_anomalies():
+    return store.get("anomalies_summary")
+
+
 @router.get("/health")
 def health():
     return {"status": "ok"}

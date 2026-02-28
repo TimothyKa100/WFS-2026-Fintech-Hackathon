@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
+from pathlib import Path
 import pandas as pd
 import numpy as np
 
@@ -8,6 +9,7 @@ from core.config import config
 from api.routes import router
 from state.store import store
 from ingestion.datascrape import get_yfinance_data
+from features.anomaly import build_anomaly_report
 
 
 app = FastAPI(title="Financial Contagion Network API")
@@ -98,10 +100,26 @@ def run_pipeline():
     corr_matrix = compute_correlation(returns_df)
     stressed_pairs = detect_stress(corr_matrix)
 
+    try:
+        repo_root = Path(__file__).resolve().parents[2]
+        anomalies_summary = build_anomaly_report(
+            data_cache_dir=repo_root / "data_cache",
+            train_data_dir=repo_root / "train_data",
+            z_threshold=config.ANOMALY_Z_THRESHOLD,
+            window=config.ANOMALY_Z_WINDOW,
+            write_parquet=False,
+        )
+    except Exception as exc:
+        anomalies_summary = {
+            "error": str(exc),
+            "generated_at": datetime.utcnow().isoformat(),
+        }
+
     store.update("prices", price_df.tail(100).to_dict())
     store.update("returns", returns_df.tail(100).to_dict())
     store.update("correlation_matrix", corr_matrix.to_dict())
     store.update("stressed_pairs", stressed_pairs)
+    store.update("anomalies_summary", anomalies_summary)
     store.update("last_update", datetime.utcnow().isoformat())
 
 

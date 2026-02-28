@@ -9,6 +9,7 @@ class InMemoryStore:
             "prices": {},
             "returns": {},
             "correlation_matrix": None,
+            "anomalies_summary": {},
             "last_update": None
         }
 
