@@ -70,7 +70,7 @@ def load_prices():
         df = get_yfinance_data(
             token=ticker,
             interval=config.INTERVAL,
-            days_from_today=3
+            days_from_today=1
         )
 
         if df is None or df.empty:

@@ -21,7 +21,7 @@ SUBMISSION_PATH = os.path.join(BASE_DIR, "submit.csv")
 
 
 def compute_factors_torch(df, device):
-    # 转换为张量 convert to tensor
+    #convert to tensor
     close = torch.tensor(df["close_price"].values, dtype=torch.float32, device=device)
     volume = torch.tensor(df["volume"].values, dtype=torch.float32, device=device)
     amount = torch.tensor(df["amount"].values, dtype=torch.float32, device=device)
@@ -1147,12 +1147,15 @@ class OptimizedModel:
         # trend/momentum
         FEATURES_TO_MED_Z = [
             "close_price",
-            "1h_momentum",
+            # "1h_momentum",
             "4h_momentum",
             "7d_momentum",
             "macd",
             "cci",
             "obv",
+            "rsi",
+            "bb_width",
+            "bb_dev",
         ]
 
         # regime shape
@@ -1209,7 +1212,7 @@ class OptimizedModel:
             "cci_rz",
             "obv_rz",
             "vwap_deviation_rz",
-            # "1h_momentum_rz",
+            "1h_momentum",
             "4h_momentum_rz",
             "7d_momentum_rz",
             # "log_return_1h",
@@ -1218,7 +1221,7 @@ class OptimizedModel:
             # "pct_change",
             "ult_osc",
             # "amount_sum_7d",
-            "amount_7d_surge",
+            # "amount_7d_surge",
             # "vol_norm_mom",
             "vol_momentum",
             "squeeze_ratio",
@@ -1266,7 +1269,7 @@ class OptimizedModel:
             "ult_osc",
             "rsi",
             # "vol_norm_mom",
-            # "1h_momentum",
+            "1h_momentum",
             "4h_momentum_rz",
             "7d_momentum_rz",
         ]
@@ -1397,7 +1400,7 @@ class OptimizedModel:
         print(f"Number of features: {len(feature_keys)}")
         print(f"Features: {feature_keys}")
 
-        df_target = derived_dfs["24hour_rtn"].shift(-windows_1d).loc[keep_slice]
+        df_target = derived_dfs["1h_momentum"].shift(-windows_1h).loc[keep_slice]
 
         self.train(df_target, features_dfs_to_use)
 
