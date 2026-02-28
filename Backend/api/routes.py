@@ -107,4 +107,13 @@ def health():
 @router.get("/asset-overview")
 def asset_overview(asset: str):
     overview = get_asset_overview(asset)
+<<<<<<< HEAD
     return {"asset": asset, "overview": overview}
+=======
+
+    return {
+        "asset": asset,
+        "overview": overview
+    }
+
+>>>>>>> 12d784c21ebd5c6fc9cb8e62b0ba256fec0bf7a7
