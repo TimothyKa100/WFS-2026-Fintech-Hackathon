@@ -12,7 +12,7 @@ pd.set_option('display.width', 1000)
 def get_binance_data(token="BTCUSDT", interval="15m", days_from_today=1):
     """Fetches 15m data from Binance and formats to standard OHLCV."""
     # 1. Calculate Yesterday's range (Unix Milliseconds)
-    yesterday = datetime.now() - timedelta(days_from_today)
+    yesterday = datetime.now() - timedelta(days_from_today+3)
     start_ts = int(yesterday.replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
     end_ts = int(yesterday.replace(hour=23, minute=59, second=59, microsecond=0).timestamp() * 1000)
 
@@ -51,7 +51,7 @@ def get_yfinance_data(token="BTC-USD", interval="15m", days_from_today=1):
     """Fetches 15m data from Yahoo Finance and formats to standard OHLCV."""
     # 1. Calculate Yesterday's range (Dates)
     today = datetime.now().date()
-    yesterday = today - timedelta(days_from_today)
+    yesterday = today - timedelta(days_from_today+3)
 
     try:
         # 2. Fetch Data
