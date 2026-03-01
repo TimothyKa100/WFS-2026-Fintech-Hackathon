@@ -82,6 +82,38 @@ function buildEdgeDelta(edges = [], prevEdgesMap) {
 function corrToEdges({ nodes = [], corrMatrix, corr_matrix, corr } = {}) {
   const ids = (nodes || []).map((n) => n.id ?? n.label).filter(Boolean);
 
+    
+  // endpoint form: { assets: string[], matrix: number[][] }
+    if (
+    Array.isArray(corr?.assets) &&
+    Array.isArray(corr?.matrix) &&
+    Array.isArray(corr?.matrix?.[0])
+    ) {
+    // align matrix to the node order using assets index
+    const assets = corr.assets;
+    const mat = corr.matrix;
+
+    const index = new Map(assets.map((id, i) => [id, i]));
+    const edges = [];
+
+    for (let i = 0; i < ids.length; i++) {
+        const a = ids[i];
+        const ai = index.get(a);
+        if (ai == null) continue;
+
+        for (let j = i + 1; j < ids.length; j++) {
+        const b = ids[j];
+        const bi = index.get(b);
+        if (bi == null) continue;
+
+        const w = Number(mat?.[ai]?.[bi]);
+        if (!Number.isFinite(w)) continue;
+        edges.push({ source: a, target: b, weight: w });
+        }
+    }
+    return edges;
+    }
+
   // matrix form
   const mat = corrMatrix ?? corr_matrix ?? null;
   if (Array.isArray(mat) && mat.length && Array.isArray(mat[0])) {
@@ -334,7 +366,7 @@ function makeMockState(now = Date.now(), universe = DEFAULT_UNIVERSE_25) {
 /* -------------------- Hook -------------------- */
 export default function useMarketState({
   intervalMs = 1200,
-  enableMockFallback = true,
+  enableMockFallback = false,
   universe = DEFAULT_UNIVERSE_25, // allow override
   maxAssets = 25, // cap API nodes for your "25 assets" requirement
 } = {}) {
@@ -373,6 +405,8 @@ export default function useMarketState({
     async function tick() {
       try {
         const data = await fetchState();
+        console.log("RAW data from fetchState:", data);
+        console.log("RAW keys:", data && typeof data === "object" ? Object.keys(data) : data);
         if (cancelled) return;
 
         let nextState = null;
@@ -383,9 +417,36 @@ export default function useMarketState({
           nextState = makeMockState(Date.now(), universe);
         }
 
+        // console.log("NEXT nextState:", nextState);
+        // console.log("NEXT nextState keys:", nextState && typeof nextState === "object" ? Object.keys(nextState) : nextState);
+        // console.log("NEXT nextState.nodes?", Array.isArray(nextState?.nodes) ? nextState.nodes.length : nextState?.nodes);
+        // console.log("NEXT nextState.edges?", Array.isArray(nextState?.edges) ? nextState.edges.length : nextState?.edges);
+
         if (nextState) {
           // ---- Nodes (cap to 25 + ensure ids) ----
-          let nodes = Array.isArray(nextState.nodes) ? nextState.nodes : [];
+
+        console.log("nextState.nodes typeof:", typeof nextState?.nodes);
+        console.log("nextState.nodes isArray:", Array.isArray(nextState?.nodes));
+        console.log("nextState.nodes value:", nextState?.nodes);
+        console.log("nextState keys:", Object.keys(nextState || {}));
+          let nodes = [];
+
+        if (Array.isArray(nextState.nodes)) {
+        nodes = nextState.nodes;
+        } else {
+        const prices = nextState.prices || {};
+        const returns = nextState.returns || {};
+
+        const ids = Object.keys(prices);
+
+        nodes = ids.map(id => ({
+            id,
+            label: id,
+            price: prices[id],
+            ret: returns[id] ?? null,
+        }));
+        }
+        console.log("nodes len after Array.isArray check:", nodes.length);
 
           nodes = nodes.slice(0, maxAssets).map((n) => ({
             ...n,
@@ -394,8 +455,22 @@ export default function useMarketState({
           }));
 
           if (!nodes.length && enableMockFallback) {
+            console.warn("FALLING BACK TO MOCK NODES because nodes.length=0");
             nodes = makeMockState(Date.now(), universe).nodes;
-          }
+            }
+          const isApi = data && typeof data === "object";
+
+        if (!nodes.length) {
+        if (!isApi && enableMockFallback) {
+            nodes = makeMockState(Date.now(), universe).nodes;
+        } else {
+            // API present but nodes missing/bad -> keep empty (or keep last good)
+            nodes = [];
+        }
+        }
+
+        console.log("NODES after normalization:", nodes);
+        console.log("NODES ids:", nodes.slice(0, 10).map(n => n.id));
 
           const risk = nextState.risk || {};
           const pca = Number(risk.pca ?? 0);
@@ -430,6 +505,9 @@ export default function useMarketState({
           if (!edges.length) {
             try {
               corrFromEndpoint = await getCorrCached();
+            //   console.log("corrFromEndpoint type:", typeof corrFromEndpoint);
+            //     console.log("corrFromEndpoint keys:", corrFromEndpoint ? Object.keys(corrFromEndpoint).slice(0, 10) : null);
+            //     console.log("sample node ids:", enrichedNodes.slice(0, 10).map(n => n.id));
               const derivedEdges = corrToEdges({
                 nodes: enrichedNodes,
                 corr: corrFromEndpoint,
@@ -472,12 +550,12 @@ export default function useMarketState({
               data && typeof data === "object" ? "api" : "mock"
             }`
           );
-          console.log("finalState:", finalState);
-          console.log("risk:", finalState.risk);
-          console.log("regime:", finalState.regime);
-          console.log("forecast:", finalState.forecast);
-          console.log("sample node:", finalState.nodes?.[0]);
-          console.log("sample edges:", finalState.edges?.slice?.(0, 5));
+        //   console.log("finalState:", finalState);
+        //   console.log("risk:", finalState.risk);
+        //   console.log("regime:", finalState.regime);
+        //   console.log("forecast:", finalState.forecast);
+        //   console.log("sample node:", finalState.nodes?.[0]);
+        //   console.log("sample edges:", finalState.edges?.slice?.(0, 5));
           console.groupEnd();
 
           // ✅ Expose globally so you can type __MARKET_STATE__ in console
