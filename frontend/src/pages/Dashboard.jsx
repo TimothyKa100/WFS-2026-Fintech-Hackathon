@@ -40,7 +40,6 @@ function TrendSignals({ up = [], down = [] }) {
 
     return (
       <div className="group relative overflow-hidden rounded-2xl border border-border bg-bg/40 px-3 py-2">
-        {/* subtle sheen */}
         <div className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity">
           <div className="absolute -inset-x-10 -top-10 h-24 rotate-6 bg-gradient-to-r from-white/0 via-white/5 to-white/0" />
         </div>
@@ -246,11 +245,26 @@ function useViewportHeight() {
 }
 
 export default function Dashboard() {
-  const { state, nodes, edges, risk, status, regime, forecast, topAnomalies } =
-    useMarketState({
-      intervalMs: 1200,
-      enableMockFallback: true,
-    });
+  // ✅ Turn on correlation replay here (edges + heatmap will follow corrDate)
+  const {
+    state,
+    nodes,
+    edges,
+    risk,
+    status,
+    regime,
+    forecast,
+    topAnomalies,
+  } = useMarketState({
+    intervalMs: 1200,
+    enableMockFallback: true,
+
+    // correlation day-by-day replay (ONLY correlation; state stays live)
+    replayCorrelation: true,
+    corrStartDate: "2026-01-06",
+    corrEndDate: "2026-02-28",
+    corrStepDays: 1,
+  });
 
   const [controls, setControls] = useState({
     threshold: 0.55,
@@ -267,10 +281,12 @@ export default function Dashboard() {
     return `thr ${t} • win ${w}`;
   }, [controls]);
 
+  // ✅ show current correlation replay date if enabled
   const systemRiskRight = useMemo(() => {
-    if (status.source === "api") return "live";
-    return "demo";
-  }, [status.source]);
+    const base = status.source === "api" ? "live" : "demo";
+    const d = status?.corrDate;
+    return d ? `${base} • corr ${d}` : base;
+  }, [status.source, status?.corrDate]);
 
   const trendUp = forecast?.trend_up ?? forecast?.trendUp ?? forecast?.up ?? [];
   const trendDown =
@@ -283,28 +299,27 @@ export default function Dashboard() {
   // A bit less than 0.85 so the graph doesn't feel cramped under the navbar
   const graphHeight = Math.max(520, Math.round(vh * 0.78));
 
-  // --- NEW: heatmap input normalization (keeps existing functionality) ---
-  // CorrelationHeatmap gets the same prop name as before: corrMatrix
-  // but we ensure it receives { assets, matrix } even if backend gives nested dict.
+  // --- Heatmap input normalization ---
+  // Prefer state.corr (hook attaches corr from /correlation?date=...) when replay is enabled
   const corrMatrixForHeatmap = useMemo(() => {
-    const raw = state?.corr_matrix ?? state?.corrMatrix ?? null;
-
-    // If already in recommended format, pass through
-    if (raw && typeof raw === "object" && Array.isArray(raw.assets) && Array.isArray(raw.matrix)) {
-      return raw;
-    }
-
-    // If backend provides nested dict under state.corr, transform it
-    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-      // raw is likely nested dict
-      return corrDictToMatrix(raw);
-    }
-
-    // If correlation dict is stored on state.corr (from hook fallback), use it
+    // If replayCorrelation is ON, the hook sets state.corr to the endpoint response
     if (state?.corr && typeof state.corr === "object") {
+      // If already in {assets, matrix}, pass through
+      if (Array.isArray(state.corr.assets) && Array.isArray(state.corr.matrix)) {
+        return state.corr;
+      }
+      // Else assume nested dict and transform
       return corrDictToMatrix(state.corr);
     }
 
+    // fallback: old behavior if backend provides corr_matrix/corrMatrix
+    const raw = state?.corr_matrix ?? state?.corrMatrix ?? null;
+    if (raw && typeof raw === "object" && Array.isArray(raw.assets) && Array.isArray(raw.matrix)) {
+      return raw;
+    }
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      return corrDictToMatrix(raw);
+    }
     return null;
   }, [state]);
 
@@ -314,7 +329,6 @@ export default function Dashboard() {
 
       {/* FULL-BLEED CANVAS GRAPH (CLIPPED + vignette) */}
       <div className="relative w-full border-b border-border bg-bg overflow-hidden isolate">
-        {/* Vignette/gradient so the graph's own top controls/title look intentional */}
         <div className="pointer-events-none absolute inset-0 z-[1]">
           <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/35 to-transparent" />
           <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/25 to-transparent" />
@@ -332,18 +346,14 @@ export default function Dashboard() {
 
       {/* BELOW: premium “ops-console” area */}
       <div className="relative">
-        {/* ambient background effects */}
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          {/* soft glows */}
           <div className="absolute -top-24 left-1/2 h-64 w-[900px] -translate-x-1/2 rounded-full bg-white/5 blur-3xl" />
           <div className="absolute top-56 -left-32 h-80 w-80 rounded-full bg-white/4 blur-3xl" />
           <div className="absolute top-80 -right-40 h-96 w-96 rounded-full bg-white/3 blur-3xl" />
-          {/* faint grid */}
           <div className="absolute inset-0 opacity-[0.05] [background-image:linear-gradient(to_right,rgba(255,255,255,0.6)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.6)_1px,transparent_1px)] [background-size:36px_36px]" />
         </div>
 
         <div className="relative px-4 sm:px-6 lg:px-8 py-8 space-y-8 max-w-[1600px] mx-auto">
-          {/* Header strip (decorative, no functionality) */}
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 rounded-2xl border border-border bg-bg/40 grid place-items-center">
@@ -382,15 +392,19 @@ export default function Dashboard() {
                   ? Number(controls.threshold).toFixed(2)
                   : "—"}
               </span>
+              {/* ✅ show corr replay date in header pills */}
+              {status?.corrDate ? (
+                <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-bg/40 text-[11px] text-muted">
+                  <span className="h-2 w-2 rounded-full bg-fuchsia-300/80" />
+                  corr {status.corrDate}
+                </span>
+              ) : null}
             </div>
           </div>
 
-          {/* 12-col “terminal-style” dashboard grid */}
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-            {/* Left rail: System Risk */}
             <div className="xl:col-span-4">
               <div className="relative">
-                {/* rail accent */}
                 <div className="pointer-events-none absolute -inset-2 rounded-[28px] bg-gradient-to-b from-white/6 via-transparent to-transparent blur-xl" />
                 <div className="relative">
                   <Panel
@@ -403,7 +417,6 @@ export default function Dashboard() {
                         <RiskGauge risk={risk} />
                       </div>
 
-                      {/* “module stack” cards */}
                       <div className="rounded-2xl border border-border/60 bg-bg/30 p-3">
                         <VolForecast rows={volForecast} />
                       </div>
@@ -421,7 +434,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Right: Controls + Timeline + Correlation Matrix stacked */}
             <div className="xl:col-span-8">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="relative">
@@ -475,9 +487,11 @@ export default function Dashboard() {
               <div className="mt-6 relative">
                 <div className="pointer-events-none absolute -inset-2 rounded-[28px] bg-gradient-to-b from-white/5 via-transparent to-transparent blur-xl" />
                 <div className="relative">
-                  <Panel title="Correlation Matrix" right="rolling corr">
+                  <Panel
+                    title="Correlation Matrix"
+                    right={status?.corrDate ? `corr ${status.corrDate}` : "rolling corr"}
+                  >
                     <div className="rounded-2xl border border-border/60 bg-bg/30 p-3">
-                      {/* KEEP SAME PROP NAME; now guaranteed to be normalized */}
                       <CorrelationHeatmap corrMatrix={corrMatrixForHeatmap} />
                     </div>
 
@@ -496,7 +510,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Footer */}
           <div className="rounded-2xl border border-border bg-bg/30 px-4 py-3 flex flex-wrap items-center justify-between gap-2">
             <div className="text-[11px] text-muted">
               Source:{" "}
@@ -505,8 +518,11 @@ export default function Dashboard() {
               </span>
             </div>
             <div className="text-[11px] text-muted">
-              Tip: use “REPLAY” and lower threshold to see structure changes
-              faster.
+              Tip: correlation replay is active; edges follow{" "}
+              <span className="text-text font-semibold">
+                {status?.corrDate ?? "—"}
+              </span>
+              .
             </div>
           </div>
         </div>

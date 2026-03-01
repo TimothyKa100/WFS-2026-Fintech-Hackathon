@@ -58,15 +58,16 @@ export function postControls(payload) {
 }
 
 /**
- * Fetch the raw correlation matrix (nested dict) from backend:
- * {
- *   "Bitcoin": { "Bitcoin": 1, "Ethereum": 0.88, ... },
- *   "Ethereum": { "Bitcoin": 0.88, "Ethereum": 1, ... },
- *   ...
- * }
+ * Fetch the raw correlation matrix from backend.
+ *
+ * Supports day-by-day replay via query param:
+ *   /correlation?date=YYYY-MM-DD
+ *
+ * If `date` is omitted, backend default behavior is used.
  */
-export function fetchCorrelation() {
-  return request("/correlation");
+export function fetchCorrelation(date) {
+  const qs = date ? `?date=${encodeURIComponent(date)}` : "";
+  return request(`/correlation${qs}`);
 }
 
 export { API_BASE };
