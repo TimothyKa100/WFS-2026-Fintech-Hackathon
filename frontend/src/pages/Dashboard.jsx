@@ -7,7 +7,6 @@ import Panel from "../components/layout/Panel.jsx";
 
 import NetworkGraph from "../components/NetworkGraph.jsx";
 import RiskGauge from "../components/RiskGauge.jsx";
-import Controls from "../components/Controls.jsx";
 import Timeline from "../components/Timeline.jsx";
 import CorrelationHeatmap from "../components/CorrelationHeatmap.jsx";
 
@@ -86,12 +85,7 @@ function TrendSignals({ up = [], down = [] }) {
         ) : null}
 
         {topDown.length ? (
-          <div
-            className={[
-              "rounded-2xl border border-border/60 bg-bg/30 p-3",
-              topUp.length ? "" : "",
-            ].join(" ")}
-          >
+          <div className="rounded-2xl border border-border/60 bg-bg/30 p-3">
             <div className="text-[11px] text-muted mb-2">Most likely down</div>
             <div className="space-y-2">
               {topDown.map((x) => (
@@ -244,19 +238,112 @@ function useViewportHeight() {
   return vh;
 }
 
+/* ---------- Inline Controls UI (removes LIVE/REPLAY + rolling window) ---------- */
+function InlineControls({ controls, setControls }) {
+  const threshold =
+    controls?.threshold != null && Number.isFinite(Number(controls.threshold))
+      ? Number(controls.threshold)
+      : 0.55;
+
+  const speed =
+    controls?.speed != null && Number.isFinite(Number(controls.speed))
+      ? Number(controls.speed)
+      : 1;
+
+  const playing = !!controls?.playing;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() =>
+            setControls((p) => ({ ...p, playing: !p.playing }))
+          }
+          className={[
+            "px-3 py-1.5 rounded-xl border text-sm font-semibold",
+            playing
+              ? "border-emerald-400/40 bg-emerald-400/15 text-text"
+              : "border-amber-400/40 bg-amber-400/15 text-text",
+          ].join(" ")}
+        >
+          {playing ? "Pause" : "Resume"}
+        </button>
+
+        <div className="ml-auto flex items-center gap-2">
+          <div className="text-xs text-muted">Speed</div>
+          <select
+            value={speed}
+            onChange={(e) =>
+              setControls((p) => ({
+                ...p,
+                speed: Number(e.target.value) || 1,
+              }))
+            }
+            className="px-2 py-1 rounded-xl border border-border bg-bg/40 text-sm"
+          >
+            <option value={0.5}>0.5×</option>
+            <option value={1}>1×</option>
+            <option value={2}>2×</option>
+            <option value={4}>4×</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs text-muted">Edge threshold (|corr|)</div>
+          <div className="text-xs text-text font-semibold">
+            {threshold.toFixed(2)}
+          </div>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={0.99}
+          step={0.01}
+          value={threshold}
+          onChange={(e) =>
+            setControls((p) => ({
+              ...p,
+              threshold: Number(e.target.value),
+            }))
+          }
+          className="w-full"
+        />
+      </div>
+
+      <div className="text-[11px] text-muted flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2">
+          <span className="h-1.5 w-1.5 rounded-full bg-white/60" />
+          Pause freezes the view (even if backend keeps updating)
+        </span>
+        <span className="hidden sm:inline text-muted">
+          threshold filters graph edges
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
-  // ✅ Turn on correlation replay here (edges + heatmap will follow corrDate)
-  const {
-    state,
-    nodes,
-    edges,
-    risk,
-    status,
-    regime,
-    forecast,
-    topAnomalies,
-  } = useMarketState({
-    intervalMs: 1200,
+  // ✅ Controls: ONLY threshold + pause + speed (no LIVE/REPLAY, no rolling window)
+  const [controls, setControls] = useState({
+    threshold: 0.55,
+    playing: true,
+    speed: 1,
+  });
+
+  // Polling interval for the hook (nice-to-have). If your hook ignores it, Pause still works via snapshot freeze.
+  const baseIntervalMs = 1200;
+  const effectiveIntervalMs = useMemo(() => {
+    const sp = Number(controls?.speed ?? 1);
+    const speed = Number.isFinite(sp) && sp > 0 ? sp : 1;
+    return Math.max(200, Math.round(baseIntervalMs / speed));
+  }, [controls?.speed]);
+
+  const hook = useMarketState({
+    intervalMs: effectiveIntervalMs,
     enableMockFallback: true,
 
     // correlation day-by-day replay (ONLY correlation; state stays live)
@@ -266,27 +353,54 @@ export default function Dashboard() {
     corrStepDays: 1,
   });
 
-  const [controls, setControls] = useState({
-    threshold: 0.55,
-    window: 30,
-    mode: "live",
-    playing: true,
-    speed: 1,
-  });
+  // ---- PAUSE THAT ACTUALLY WORKS: freeze what we DISPLAY ----
+  const [frozen, setFrozen] = useState(null);
+
+  useEffect(() => {
+    // When playing, continuously refresh the frozen snapshot
+    if (controls.playing) {
+      setFrozen({
+        state: hook.state,
+        nodes: hook.nodes,
+        edges: hook.edges,
+        risk: hook.risk,
+        status: hook.status,
+        regime: hook.regime,
+        forecast: hook.forecast,
+        topAnomalies: hook.topAnomalies,
+      });
+    }
+    // when paused, do nothing (keeps last frozen snapshot)
+  }, [
+    controls.playing,
+    hook.state,
+    hook.nodes,
+    hook.edges,
+    hook.risk,
+    hook.status,
+    hook.regime,
+    hook.forecast,
+    hook.topAnomalies,
+  ]);
+
+  const display = controls.playing ? hook : frozen || hook;
+
+  const {
+    state,
+    nodes,
+    edges,
+    risk,
+    status,
+    regime,
+    forecast,
+    topAnomalies,
+  } = display;
 
   const controlsRight = useMemo(() => {
     const t =
       controls?.threshold != null ? Number(controls.threshold).toFixed(2) : "—";
-    const w = controls?.window != null ? controls.window : "—";
-    return `thr ${t} • win ${w}`;
+    return `thr ${t}`;
   }, [controls]);
-
-  // ✅ show current correlation replay date if enabled
-  const systemRiskRight = useMemo(() => {
-    const base = status.source === "api" ? "live" : "demo";
-    const d = status?.corrDate;
-    return d ? `${base} • corr ${d}` : base;
-  }, [status.source, status?.corrDate]);
 
   const trendUp = forecast?.trend_up ?? forecast?.trendUp ?? forecast?.up ?? [];
   const trendDown =
@@ -295,26 +409,24 @@ export default function Dashboard() {
     forecast?.vol_forecast ?? forecast?.volForecast ?? forecast?.vols ?? [];
 
   const vh = useViewportHeight();
-
-  // A bit less than 0.85 so the graph doesn't feel cramped under the navbar
   const graphHeight = Math.max(520, Math.round(vh * 0.78));
 
   // --- Heatmap input normalization ---
-  // Prefer state.corr (hook attaches corr from /correlation?date=...) when replay is enabled
   const corrMatrixForHeatmap = useMemo(() => {
-    // If replayCorrelation is ON, the hook sets state.corr to the endpoint response
     if (state?.corr && typeof state.corr === "object") {
-      // If already in {assets, matrix}, pass through
       if (Array.isArray(state.corr.assets) && Array.isArray(state.corr.matrix)) {
         return state.corr;
       }
-      // Else assume nested dict and transform
       return corrDictToMatrix(state.corr);
     }
 
-    // fallback: old behavior if backend provides corr_matrix/corrMatrix
     const raw = state?.corr_matrix ?? state?.corrMatrix ?? null;
-    if (raw && typeof raw === "object" && Array.isArray(raw.assets) && Array.isArray(raw.matrix)) {
+    if (
+      raw &&
+      typeof raw === "object" &&
+      Array.isArray(raw.assets) &&
+      Array.isArray(raw.matrix)
+    ) {
       return raw;
     }
     if (raw && typeof raw === "object" && !Array.isArray(raw)) {
@@ -322,6 +434,32 @@ export default function Dashboard() {
     }
     return null;
   }, [state]);
+
+  // ✅ Threshold: filter edges client-side
+  const filteredEdges = useMemo(() => {
+    const thr =
+      controls?.threshold != null && Number.isFinite(Number(controls.threshold))
+        ? Number(controls.threshold)
+        : 0;
+
+    const getW = (e) => {
+      const w =
+        e?.weight ??
+        e?.corr ??
+        e?.value ??
+        e?.strength ??
+        e?.w ??
+        e?.r ??
+        0;
+      const n = Number(w);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    if (!Array.isArray(edges) || !edges.length) return [];
+    if (thr <= 0) return edges;
+
+    return edges.filter((e) => Math.abs(getW(e)) >= thr);
+  }, [edges, controls?.threshold]);
 
   return (
     <div className="min-h-screen bg-bg text-text">
@@ -340,7 +478,7 @@ export default function Dashboard() {
           className="relative w-full overflow-hidden z-0"
           style={{ height: graphHeight + 320 }}
         >
-          <NetworkGraph nodes={nodes} edges={edges} height={graphHeight} />
+          <NetworkGraph nodes={nodes} edges={filteredEdges} height={graphHeight} />
         </div>
       </div>
 
@@ -374,17 +512,24 @@ export default function Dashboard() {
                 <span
                   className={[
                     "h-2 w-2 rounded-full",
-                    status.source === "api"
+                    status?.source === "api"
                       ? "bg-emerald-300/80"
                       : "bg-amber-300/80",
                   ].join(" ")}
                 />
-                {status.source === "api" ? "Live feed" : "Demo feed"}
+                {status?.source === "api" ? "Live feed" : "Demo feed"}
               </span>
+
               <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-bg/40 text-[11px] text-muted">
-                <span className="h-2 w-2 rounded-full bg-sky-300/80" />
-                rolling window {controls?.window ?? "—"}
+                <span
+                  className={[
+                    "h-2 w-2 rounded-full",
+                    controls.playing ? "bg-emerald-300/80" : "bg-amber-300/80",
+                  ].join(" ")}
+                />
+                {controls.playing ? "running" : "paused"}
               </span>
+
               <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-bg/40 text-[11px] text-muted">
                 <span className="h-2 w-2 rounded-full bg-purple-300/80" />
                 threshold{" "}
@@ -392,7 +537,8 @@ export default function Dashboard() {
                   ? Number(controls.threshold).toFixed(2)
                   : "—"}
               </span>
-              {/* ✅ show corr replay date in header pills */}
+
+              {/* show corr replay date in header pills */}
               {status?.corrDate ? (
                 <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border bg-bg/40 text-[11px] text-muted">
                   <span className="h-2 w-2 rounded-full bg-fuchsia-300/80" />
@@ -407,11 +553,7 @@ export default function Dashboard() {
               <div className="relative">
                 <div className="pointer-events-none absolute -inset-2 rounded-[28px] bg-gradient-to-b from-white/6 via-transparent to-transparent blur-xl" />
                 <div className="relative">
-                  <Panel
-                    title="System Risk"
-                    right={systemRiskRight}
-                    className="h-full"
-                  >
+                  <Panel title="System Risk" className="h-full">
                     <div className="space-y-3">
                       <div className="rounded-2xl border border-border/60 bg-bg/30 p-3">
                         <RiskGauge risk={risk} />
@@ -439,23 +581,9 @@ export default function Dashboard() {
                 <div className="relative">
                   <div className="pointer-events-none absolute -inset-2 rounded-[28px] bg-gradient-to-b from-white/5 via-transparent to-transparent blur-xl" />
                   <div className="relative">
-                    <Panel
-                      title="Controls"
-                      right={controlsRight}
-                      className="h-full"
-                    >
+                    <Panel title="Controls" right={controlsRight} className="h-full">
                       <div className="rounded-2xl border border-border/60 bg-bg/30 p-3">
-                        <Controls initial={controls} onChange={setControls} />
-                      </div>
-
-                      <div className="mt-3 text-[11px] text-muted flex items-center justify-between gap-3">
-                        <span className="inline-flex items-center gap-2">
-                          <span className="h-1.5 w-1.5 rounded-full bg-white/60" />
-                          Tune sensitivity + replay speed
-                        </span>
-                        <span className="hidden sm:inline text-muted">
-                          changes apply instantly
-                        </span>
+                        <InlineControls controls={controls} setControls={setControls} />
                       </div>
                     </Panel>
                   </div>
@@ -514,7 +642,7 @@ export default function Dashboard() {
             <div className="text-[11px] text-muted">
               Source:{" "}
               <span className="text-text font-semibold">
-                {status.source === "api" ? "Backend API" : "Mock fallback"}
+                {status?.source === "api" ? "Backend API" : "Mock fallback"}
               </span>
             </div>
             <div className="text-[11px] text-muted">
